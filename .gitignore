@@ -1,0 +1,8 @@
+node_modules/
+dist/
+
+# Local environment and editor files
+*.local
+.DS_Store
+.vscode/
+.idea/
