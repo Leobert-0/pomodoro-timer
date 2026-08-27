@@ -108,6 +108,7 @@ export function useTimer(settings: Settings, onComplete?: (mode: TimerMode) => v
 
   return {
     mode, status, timeLeft, totalDuration, completedSessions,
+    endTime: status === 'running' ? endTimeRef.current : null,
     start, pause, reset, switchMode, setCompletedSessions,
   };
 }

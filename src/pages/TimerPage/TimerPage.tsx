@@ -23,7 +23,12 @@ interface Props {
 export default function TimerPage({ isActive = true }: Props) {
   const { settings, updateSettings } = useSettings();
   const { playChime, warmUp } = useAudio();
-  const { requestPermission, sendNotification } = useNotification();
+  const {
+    requestPermission,
+    sendNotification,
+    showTimerNotification,
+    cancelTimerNotification,
+  } = useNotification();
   const { recordSession } = useStats();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hasWarmedUp = useRef(false);
@@ -49,7 +54,7 @@ export default function TimerPage({ isActive = true }: Props) {
   }, [settings, playChime, sendNotification, recordSession]);
 
   const {
-    mode, status, timeLeft, totalDuration, completedSessions,
+    mode, status, timeLeft, totalDuration, completedSessions, endTime,
     start, pause, reset, switchMode, setCompletedSessions,
   } = useTimer(settings, handleComplete);
 
@@ -60,6 +65,16 @@ export default function TimerPage({ isActive = true }: Props) {
   useEffect(() => {
     completedSessionsRef.current = completedSessions;
   }, [completedSessions]);
+
+  // Android renders the countdown itself from this deadline, so this bridge
+  // only needs to run when the timer state changes rather than on every tick.
+  useEffect(() => {
+    if (settings.notificationsEnabled && status === 'running' && endTime !== null) {
+      showTimerNotification(mode, endTime);
+    } else {
+      cancelTimerNotification();
+    }
+  }, [cancelTimerNotification, endTime, mode, settings.notificationsEnabled, showTimerNotification, status]);
 
   // Set body data-mode for CSS variable switching
   useEffect(() => {
@@ -77,15 +92,15 @@ export default function TimerPage({ isActive = true }: Props) {
     document.title = `(${formatTime(timeLeft)}) ${label} — Pomodoro`;
   }, [isActive, timeLeft, mode]);
 
-  const handleStartPause = useCallback(() => {
+  const handleStartPause = useCallback(async () => {
     if (!hasWarmedUp.current) {
       warmUp();
-      if (settings.notificationsEnabled) requestPermission();
       hasWarmedUp.current = true;
     }
     if (status === 'running') {
       pause();
     } else {
+      if (settings.notificationsEnabled) await requestPermission();
       start();
     }
   }, [pause, requestPermission, settings.notificationsEnabled, start, status, warmUp]);
