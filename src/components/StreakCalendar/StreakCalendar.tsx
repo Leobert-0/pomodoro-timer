@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { DailyStats } from '../../types';
 import { getLocalDateString } from '../../utils/streak';
 import styles from './StreakCalendar.module.css';
@@ -8,10 +9,26 @@ interface Props {
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const LONG_PRESS_MS = 500;
+const MOVE_TOLERANCE_PX = 10;
+
+interface CalendarDay {
+  dayNum: number;
+  dateKey: string;
+  count: number;
+  minutes: number;
+  isToday: boolean;
+  isFuture: boolean;
+}
 
 export default function StreakCalendar({ stats }: Props) {
   const [viewDate, setViewDate] = useState(() => new Date());
   const [showInfo, setShowInfo] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const pressStartRef = useRef({ x: 0, y: 0 });
+  const dialogCloseRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const sessionMap = new Map(stats.map(s => [s.date, s]));
 
@@ -24,18 +41,74 @@ export default function StreakCalendar({ stats }: Props) {
 
   // Month navigation
   const handlePrevMonth = () => {
+    setSelectedDay(null);
     setViewDate(new Date(viewYear, viewMonth - 1, 1));
   };
 
   const handleNextMonth = () => {
     if (!isCurrentMonth) {
+      setSelectedDay(null);
       setViewDate(new Date(viewYear, viewMonth + 1, 1));
     }
   };
 
   const handleCurrentMonth = () => {
+    setSelectedDay(null);
     setViewDate(new Date());
   };
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const openDayDetails = (day: CalendarDay, trigger: HTMLButtonElement) => {
+    if (day.isFuture) return;
+    triggerRef.current = trigger;
+    setSelectedDay(day);
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, day: CalendarDay) => {
+    if (event.button !== 0 || day.isFuture) return;
+    clearLongPress();
+    pressStartRef.current = { x: event.clientX, y: event.clientY };
+    const trigger = event.currentTarget;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      openDayDetails(day, trigger);
+      navigator.vibrate?.(20);
+    }, LONG_PRESS_MS);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const dx = event.clientX - pressStartRef.current.x;
+    const dy = event.clientY - pressStartRef.current.y;
+    if (Math.hypot(dx, dy) > MOVE_TOLERANCE_PX) clearLongPress();
+  };
+
+  const closeDayDetails = useCallback(() => {
+    setSelectedDay(null);
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDay) return;
+    dialogCloseRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDayDetails();
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        dialogCloseRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closeDayDetails, selectedDay]);
+
+  useEffect(() => () => clearLongPress(), [clearLongPress]);
 
   // Month days calculation
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -44,7 +117,7 @@ export default function StreakCalendar({ stats }: Props) {
   const monthLabel = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   // Generate days for this specific month
-  const days = [];
+  const days: CalendarDay[] = [];
   let monthTotalSessions = 0;
   let monthTotalMinutes = 0;
 
@@ -63,6 +136,7 @@ export default function StreakCalendar({ stats }: Props) {
       count,
       minutes,
       isToday: dateKey === todayKey,
+      isFuture: dateKey > todayKey,
     });
   }
 
@@ -79,6 +153,22 @@ export default function StreakCalendar({ stats }: Props) {
   const hours = Math.floor(monthTotalMinutes / 60);
   const mins = monthTotalMinutes % 60;
   const focusTimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+  const selectedFocusTime = selectedDay
+    ? (() => {
+        const selectedHours = Math.floor(selectedDay.minutes / 60);
+        const selectedMinutes = selectedDay.minutes % 60;
+        return selectedHours > 0 ? `${selectedHours}h ${selectedMinutes}m` : `${selectedMinutes}m`;
+      })()
+    : '';
+
+  const selectedDateLabel = selectedDay
+    ? new Date(
+        Number(selectedDay.dateKey.slice(0, 4)),
+        Number(selectedDay.dateKey.slice(5, 7)) - 1,
+        Number(selectedDay.dateKey.slice(8, 10)),
+      ).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
 
   return (
     <div className={styles.container}>
@@ -152,6 +242,9 @@ export default function StreakCalendar({ stats }: Props) {
             • The calendar shows every day of the month with color brightness reflecting how many sessions you finished that day.
           </p>
           <p className={styles.infoText}>
+            • Long-press a day to view its completed sessions and focus time.
+          </p>
+          <p className={styles.infoText}>
             • Use the <strong>&lt;</strong> and <strong>&gt;</strong> buttons to browse your history in previous months.
           </p>
         </div>
@@ -173,14 +266,26 @@ export default function StreakCalendar({ stats }: Props) {
 
         {/* Days of current month */}
         {days.map(d => (
-          <div
+          <button
+            type="button"
             key={d.dateKey}
-            className={`${styles.dayCell} ${getLevel(d.count)} ${d.isToday ? styles.todayCell : ''}`}
+            className={`${styles.dayCell} ${getLevel(d.count)} ${d.isToday ? styles.todayCell : ''} ${d.isFuture ? styles.futureCell : ''}`}
             title={`${d.dateKey}: ${d.count} session${d.count !== 1 ? 's' : ''} (${d.minutes}m focus)`}
+            aria-label={`${d.dateKey}: ${d.count} completed Pomodoro${d.count !== 1 ? 's' : ''}, ${d.minutes} minutes of focus. Long press for details.`}
+            disabled={d.isFuture}
+            onPointerDown={event => handlePointerDown(event, d)}
+            onPointerMove={handlePointerMove}
+            onPointerUp={clearLongPress}
+            onPointerCancel={clearLongPress}
+            onPointerLeave={clearLongPress}
+            onContextMenu={event => event.preventDefault()}
+            onClick={event => {
+              if (event.detail === 0) openDayDetails(d, event.currentTarget);
+            }}
           >
             <span className={styles.dayNumber}>{d.dayNum}</span>
             {d.count > 0 && <span className={styles.dotIndicator} />}
-          </div>
+          </button>
         ))}
       </div>
 
@@ -206,6 +311,50 @@ export default function StreakCalendar({ stats }: Props) {
           <span className={styles.legendLabel}>More</span>
         </div>
       </div>
+
+      {selectedDay && (
+        <div className={styles.sheetBackdrop} onPointerDown={closeDayDetails}>
+          <section
+            className={styles.detailSheet}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="day-detail-title"
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <div className={styles.sheetHandle} aria-hidden="true" />
+            <div className={styles.detailHeader}>
+              <div>
+                <span className={styles.detailEyebrow}>Daily progress</span>
+                <h3 id="day-detail-title" className={styles.detailTitle}>{selectedDateLabel}</h3>
+              </div>
+              <button
+                ref={dialogCloseRef}
+                type="button"
+                className={styles.detailClose}
+                onClick={closeDayDetails}
+                aria-label="Close daily statistics"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className={styles.detailStats}>
+              <div className={styles.detailStatCard}>
+                <strong>{selectedDay.count}</strong>
+                <span>Pomodoro{selectedDay.count !== 1 ? 's' : ''}</span>
+              </div>
+              <div className={styles.detailStatCard}>
+                <strong>{selectedFocusTime}</strong>
+                <span>Focus time</span>
+              </div>
+            </div>
+
+            {selectedDay.count === 0 && (
+              <p className={styles.emptyDetail}>No focus activity was recorded for this day.</p>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
