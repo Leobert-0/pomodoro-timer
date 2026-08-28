@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "icons:generate": "npx @capacitor/assets generate --android",
+    "cap:sync": "npm run build && npx cap sync android",
+    "build:apk": "npm run build && npx cap sync android && cd android && gradlew.bat assembleDebug && cd .."
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
