@@ -321,7 +321,6 @@ export default function StreakCalendar({ stats }: Props) {
             aria-labelledby="day-detail-title"
             onPointerDown={event => event.stopPropagation()}
           >
-            <div className={styles.sheetHandle} aria-hidden="true" />
             <div className={styles.detailHeader}>
               <div>
                 <span className={styles.detailEyebrow}>Daily progress</span>
